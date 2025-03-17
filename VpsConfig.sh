@@ -88,7 +88,7 @@ ignoreip = 127.0.0.1
 bantime = 86400
 maxretry = 3
 findtime = 1800
-banaction = ufw
+banaction = iptables-multiport
 backend = systemd
 [sshd]
 enabled = true
