@@ -129,7 +129,7 @@ if [[ "$modify_fail2ban" =~ ^[Yy]$ ]]; then
  # 创建配置文件 
  cat > /etc/fail2ban/jail.local << EOF
 [DEFAULT]
-ignoreip = $ignore_ips
+ignoreip = 127.0.0.1/8
 bantime = $((bantime * 3600)) # 将小时转换为秒
 maxretry = $maxretry
 findtime = $findtime
