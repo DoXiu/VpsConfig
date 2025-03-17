@@ -83,16 +83,19 @@ systemctl restart ssh || log_error "SSH 服务重启失败"
 # 配置 fail2ban
 log_success "配置 fail2ban..."
 tee /etc/fail2ban/jail.local > /dev/null << EOF
-[sshd]
-ignoreip = 127.0.0.1/8
-enabled = true
-filter = sshd
-port = $ssh_port
+[DEFAULT]
+ignoreip = 127.0.0.1
+bantime = 86400
 maxretry = 3
-findtime = 3600
-bantime = -1
+findtime = 1800
 banaction = ufw
+backend = systemd
+[sshd]
+enabled = true
+port = $ssh_port
+filter = sshd
 logpath = /var/log/auth.log
+
 EOF
 
 # 配置 UFW
