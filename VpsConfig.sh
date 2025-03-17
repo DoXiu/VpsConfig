@@ -220,7 +220,7 @@ log_success "启动并设置 fail2ban 和 systemd-timesyncd 开机自启..."
 systemctl start fail2ban systemd-timesyncd
 systemctl enable fail2ban systemd-timesyncd
 # 启用 ufw
-read -p "$(printf "%b" "${YELLOW}即将启用防火墙，请确认已放行必要端口！继续？(y/N)${NC} ")" confirm
+read -p "$(printf "%b" "${YELLOW}即将启用防火墙，请确认已放行必要端口！继续？(y/n)${NC} ")" confirm
 [[ "$confirm" =~ ^[Yy]$ ]] && ufw --force enable || log_warn "已跳过防火墙启用步骤"
 
 # ---------------------- 最终配置汇总 ---------------------- #
