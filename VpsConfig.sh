@@ -75,26 +75,26 @@ if [[ "$modify_hostname" =~ ^[Yy]$ ]]; then
     done 
 fi 
  
-# [2] 修改 SSH 端口 
+# [2] 修改 SSH 端口
 echo -e "\n${YELLOW}当前 SSH 端口: $CURRENT_SSH_PORT${NC}"
 log_success "修改 SSH 端口..."
-while true; do 
-    read -p "$(printf "%b" "${GREEN}请输入新的 SSH 端口（默认 $CURRENT_SSH_PORT）: ${NC}")" ssh_port 
+while true; do
+    read -p "$(printf "%b" "${GREEN}请输入新的 SSH 端口（默认 $CURRENT_SSH_PORT）: ${NC}")" ssh_port
     ssh_port=${ssh_port:-$CURRENT_SSH_PORT}
-    if validate_port "$ssh_port"; then 
-        CURRENT_SSH_PORT=$ssh_port 
-        break 
-    else 
+    if validate_port "$ssh_port"; then
+        CURRENT_SSH_PORT=$ssh_port
+        break
+    else
         log_warn "端口必须是 1-65535 之间的整数！"
-    fi 
-done 
- 
-# 备份并修改 SSH 配置 
-cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak  
-# 精准处理 Port 配置 
-sed -i "/^Port/d" /etc/ssh/sshd_config        # 删除所有 Port 行 
-sed -i "/^#Port/d" /etc/ssh/sshd_config       # 删除所有注释的 Port 行 
-echo "Port $ssh_port" >> /etc/ssh/sshd_config # 写入新端口  
+    fi
+done
+
+# 备份并修改 SSH 配置
+cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak 
+# 精准处理 Port 配置
+sed -i "/^Port/d" /etc/ssh/sshd_config # 删除所有 Port 行
+sed -i "/^#Port/d" /etc/ssh/sshd_config # 删除所有注释的 Port 行
+echo "Port $CURRENT_SSH_PORT" >> /etc/ssh/sshd_config # 写入新端口
 systemctl restart ssh || log_error "SSH 服务重启失败"
  
 # [3] 配置 fail2ban 
