@@ -41,7 +41,8 @@ check_root
 # 初始化配置跟踪变量 
 CURRENT_HOSTNAME=$(hostname)
 CURRENT_SSH_PORT=$(grep -E "^Port" /etc/ssh/sshd_config | awk '{print $2}' || echo "22")
-CURRENT_DNS=$(grep -E "^nameserver" /etc/resolv.conf    2>/dev/null | awk '{print $2}' | tr '\n' ' ')
+CURRENT_SSH_PORT=${CURRENT_SSH_PORT:-22}  # 若提取失败，默认使用22
+CURRENT_DNS=$(grep -E "^nameserver" /etc/resolv.conf 2>/dev/null | awk '{printf "%s ", $2}' | sed 's/ $//')
 CURRENT_SWAP=$(swapon --show=NAME,SIZE --noheadings | awk '{print $1 " (" $2 ")"}' | tr '\n' ',' | sed 's/,$//')
 CURRENT_FAIL2BAN_MAXRETRIES="3"
 CURRENT_FAIL2BAN_BANTIME="24"
@@ -91,13 +92,17 @@ done
 # 备份并修改 SSH 配置
 cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak  
 # 精准处理 Port 配置
-sed -i "/^Port/d" /etc/ssh/sshd_config # 删除所有 Port 行
-sed -i "/^#Port/d" /etc/ssh/sshd_config # 删除所有注释的 Port 行
-echo "Port $CURRENT_SSH_PORT" >> /etc/ssh/sshd_config # 写入新端口
+if grep -q "^Port" /etc/ssh/sshd_config; then
+  sed -i "s/^Port .*/Port $CURRENT_SSH_PORT/" /etc/ssh/sshd_config
+else
+  echo "Port $CURRENT_SSH_PORT" >> /etc/ssh/sshd_config
+fi
 systemctl restart ssh || log_error "SSH 服务重启失败"
 # 配置 ufw
 echo -e "${GREEN}配置 ufw...${NC}"
-ufw allow "$ssh_port"
+if ! ufw status | grep -q "$ssh_port"; then
+  ufw allow "$ssh_port"
+fi
 
 # [3] 配置 fail2ban 
 read -p "$(printf "%b" "${GREEN}是否修改 fail2ban 配置？(y/n)默认n${NC} ")" modify_fail2ban 
@@ -129,7 +134,7 @@ if [[ "$modify_fail2ban" =~ ^[Yy]$ ]]; then
  cat > /etc/fail2ban/jail.local << EOF
 [DEFAULT]
 ignoreip = 127.0.0.1/8
-bantime = $((bantime * 3600)) # 将小时转换为秒
+bantime = $bantime_seconds
 maxretry = $maxretry
 findtime = $findtime
 banaction = iptables-multiport
@@ -201,8 +206,11 @@ if [[ "$modify_swap" =~ ^[Yy]$ ]]; then
     fi
 
     log_success "创建 Swap 文件..."
-    if ! fallocate -l "${SWAP_SIZE}M" "$SWAP_FILE"; then
-        dd if=/dev/zero of="$SWAP_FILE" bs=1M count=$SWAP_SIZE status=progress || log_error "Swap 文件创建失败"
+    if fallocate -l "${SWAP_SIZE}M" "$SWAP_FILE"; then
+       log_success "Swap 文件创建成功 (fallocate)"
+    else
+       log_warn "fallocate 失败，改用 dd 创建..."
+       dd if=/dev/zero of="$SWAP_FILE" bs=1M count=$SWAP_SIZE status=progress || log_error "Swap 文件创建失败"
     fi
     
     chmod 600 "$SWAP_FILE"
