@@ -127,21 +127,21 @@ if [[ "$modify_fail2ban" =~ ^[Yy]$ ]]; then
     done 
 
  # 创建配置文件 
-    cat > /etc/fail2ban/jail.local  <<EOF 
+ cat > /etc/fail2ban/jail.local  <<EOF
 [DEFAULT]
-ignoreip = $ignore_ips 
-bantime = $((bantime * 3600))  # 将小时转换为秒 
-maxretry = $maxretry 
-findtime = $findtime 
-banaction = iptables-multiport 
-backend = systemd 
- 
+ignoreip = $ignore_ips
+bantime = $((bantime * 3600)) # 将小时转换为秒
+maxretry = $maxretry
+findtime = $findtime
+banaction = iptables-multiport
+backend = systemd
+
 [sshd]
-enabled = true 
-port = $CURRENT_SSH_PORT  # 使用脚本中已配置的SSH端口 
-filter = sshd 
-logpath = /var/log/auth.log  
-EOF 
+enabled = true
+port = $CURRENT_SSH_PORT # 使用脚本中已配置的SSH端口
+filter = sshd
+logpath = /var/log/auth.log 
+EOF
 
     # 更新跟踪变量 
     CURRENT_FAIL2BAN_MAXRETRIES=$maxretry 
