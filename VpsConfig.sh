@@ -41,8 +41,10 @@ check_root
 # 初始化配置跟踪变量
 CURRENT_HOSTNAME=$(hostname)
 CURRENT_SSH_PORT=$(grep -E "^Port" /etc/ssh/sshd_config | awk '{print $2}' || echo "22")
-CURRENT_DNS=$(grep -E "^nameserver" /etc/resolv.conf 2>/dev/null | awk '{print $2}' | tr '\n' ' ')
+CURRENT_DNS=$(grep -E "^nameserver" /etc/resolv.conf  2>/dev/null | awk '{print $2}' | tr '\n' ' ')
 CURRENT_SWAP=$(swapon --show=NAME,SIZE --noheadings | awk '{print $1 " (" $2 ")"}' | tr '\n' ',' | sed 's/,$//')
+CURRENT_FAIL2BAN_FINDTIME=""
+CURRENT_FAIL2BAN_BANACTION="iptables-multiport"
 
 # 更新系统
 log_success "更新系统源并升级..."
@@ -87,11 +89,31 @@ while true; do
 done
 
 # 备份并修改 SSH 配置
-cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
+cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak 
 sed -i -E "s/^#?(Port|X11Forwarding) .*/Port $ssh_port\nX11Forwarding no/" /etc/ssh/sshd_config
 systemctl restart ssh || log_error "SSH 服务重启失败"
 
-# [3] 配置 DNS
+# [3] 配置 fail2ban
+echo -e "\n${YELLOW}当前 fail2ban banaction: $CURRENT_FAIL2BAN_BANACTION${NC}"
+echo -e "${YELLOW}当前 fail2ban findtime: ${CURRENT_FAIL2BAN_FINDTIME:-未设置}${NC}"
+read -p "$(printf "%b" "${GREEN}是否配置 fail2ban findtime？(y/N)${NC} ")" modify_fail2ban_findtime
+if [[ "$modify_fail2ban_findtime" =~ ^[Yy]$ ]]; then
+    while true; do
+        read -p "请输入 fail2ban findtime（秒，例如 3600）: " fail2ban_findtime
+        [[ "$fail2ban_findtime" =~ ^[0-9]+$ ]] && break || log_warn "请输入正整数"
+    done
+    CURRENT_FAIL2BAN_FINDTIME=$fail2ban_findtime
+
+    # 修改 fail2ban 配置
+    cp /etc/fail2ban/jail.local  /etc/fail2ban/jail.local.bak  2>/dev/null
+    if [ ! -f /etc/fail2ban/jail.local  ]; then
+        cp /etc/fail2ban/jail.conf  /etc/fail2ban/jail.local 
+    fi
+    sed -i -E "s/^#?banaction .*/banaction = $CURRENT_FAIL2BAN_BANACTION/" /etc/fail2ban/jail.local 
+    sed -i -E "s/^#?findtime .*/findtime = $CURRENT_FAIL2BAN_FINDTIME/" /etc/fail2ban/jail.local 
+fi
+
+# [4] 配置 DNS
 echo -e "\n${YELLOW}当前 DNS 服务器: ${CURRENT_DNS:-无配置}${NC}"
 read -p "$(printf "%b" "${GREEN}是否修改 DNS 配置？(y/N)${NC} ")" modify_dns
 if [[ "$modify_dns" =~ ^[Yy]$ ]]; then
@@ -109,10 +131,10 @@ if [[ "$modify_dns" =~ ^[Yy]$ ]]; then
                 [[ "$stop_resolved" =~ ^[Yy]$ ]] && systemctl stop systemd-resolved
             fi
             
-            cp /etc/resolv.conf /etc/resolv.conf.bak
-            chattr -i /etc/resolv.conf 2>/dev/null
-            printf "nameserver %s\n" $dns_servers > /etc/resolv.conf
-            chattr +i /etc/resolv.conf
+            cp /etc/resolv.conf  /etc/resolv.conf.bak 
+            chattr -i /etc/resolv.conf  2>/dev/null
+            printf "nameserver %s\n" $dns_servers > /etc/resolv.conf 
+            chattr +i /etc/resolv.conf 
             CURRENT_DNS=$dns_servers  # 更新跟踪变量
             break
         else
@@ -121,7 +143,7 @@ if [[ "$modify_dns" =~ ^[Yy]$ ]]; then
     done
 fi
 
-# [4] 配置 Swap
+# [5] 配置 Swap
 echo -e "\n${YELLOW}当前 Swap 配置: ${CURRENT_SWAP:-无}${NC}"
 read -p "$(printf "%b" "${GREEN}是否配置 Swap？(y/N)${NC} ")" modify_swap
 if [[ "$modify_swap" =~ ^[Yy]$ ]]; then
@@ -154,18 +176,27 @@ if [[ "$modify_swap" =~ ^[Yy]$ ]]; then
     swapon "$SWAP_FILE" || log_error "swapon 失败"
     echo "$SWAP_FILE none swap sw 0 0" >> /etc/fstab
     
-    sysctl vm.swappiness=$SWAPPINESS
-    echo "vm.swappiness=$SWAPPINESS" >> /etc/sysctl.conf
+    sysctl vm.swappiness=$SWAPPINESS 
+    echo "vm.swappiness=$SWAPPINESS"  >> /etc/sysctl.conf 
     CURRENT_SWAP="${SWAP_FILE} (${SWAP_SIZE}MB)"  # 更新跟踪变量
 fi
+
+
+
+# 启动服务并设置开机自启
+log_success "启动并设置 fail2ban 和 systemd-timesyncd 开机自启..."
+systemctl start fail2ban systemd-timesyncd
+systemctl enable fail2ban systemd-timesyncd
 
 # ---------------------- 最终配置汇总 ---------------------- #
 log_success "所有配置已完成！"
 echo -e "${YELLOW}\n==================== 最终配置汇总 ====================${NC}"
 echo -e "1. Hostname: ${GREEN}$CURRENT_HOSTNAME${NC}"
 echo -e "2. SSH 端口: ${GREEN}$CURRENT_SSH_PORT${NC}"
-echo -e "3. DNS 服务器: ${GREEN}${CURRENT_DNS:-未修改}${NC}"
-echo -e "4. Swap 配置: ${GREEN}${CURRENT_SWAP:-未修改}${NC}"
+echo -e "3. fail2ban banaction: ${GREEN}$CURRENT_FAIL2BAN_BANACTION${NC}
+            fail2ban findtime: ${GREEN}${CURRENT_FAIL2BAN_FINDTIME:-未修改}${NC}"
+echo -e "5. DNS 服务器: ${GREEN}${CURRENT_DNS:-未修改}${NC}"
+echo -e "6. Swap 配置: ${GREEN}${CURRENT_SWAP:-未修改}${NC}"
 echo -e "${YELLOW}===================================================${NC}"
 echo -e "\n${YELLOW}防火墙状态：${NC}"
 ufw status
