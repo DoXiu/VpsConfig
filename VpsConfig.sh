@@ -221,8 +221,8 @@ log_success "启动并设置 fail2ban 和 systemd-timesyncd 开机自启..."
 systemctl start fail2ban systemd-timesyncd
 systemctl enable fail2ban systemd-timesyncd
 # 启用 ufw
-echo -e "${GREEN}启用 ufw...${NC}"
-ufw enable
+read -p "$(printf "%b" "${YELLOW}即将启用防火墙，请确认已放行必要端口！继续？(y/N)${NC} ")" confirm
+[[ "$confirm" =~ ^[Yy]$ ]] && ufw --force enable || log_warn "已跳过防火墙启用步骤"
 
 # ---------------------- 最终配置汇总 ---------------------- #
 log_success "所有配置已完成！"
@@ -233,6 +233,11 @@ echo -e "3. fail2ban 配置:"
 echo -e "   - 最大错误次数: ${GREEN}$CURRENT_FAIL2BAN_MAXRETRIES${NC}"
 echo -e "   - 封禁时间: ${GREEN}$CURRENT_FAIL2BAN_BANTIME 小时${NC}"
 echo -e "   - 检测时间窗口: ${GREEN}$CURRENT_FAIL2BAN_FINDTIME 秒${NC}"
-echo -e "5. DNS 服务器: ${GREEN}${CURRENT_DNS:-未修改}${NC}"
-echo -e "6. Swap 配置: ${GREEN}${CURRENT_SWAP:-未修改}${NC}"
+echo -e "4. DNS 服务器: ${GREEN}${CURRENT_DNS:-未修改}${NC}"
+echo -e "5. Swap 配置: ${GREEN}${CURRENT_SWAP:-未修改}${NC}"
 echo -e "${YELLOW}===================================================${NC}"
+printf "%b\n" "${YELLOW}重要提示："
+echo "1. 请确认可通过端口 $CURRENT_SSH_PORT 连接 SSH"
+echo "2. 当前防火墙规则："
+ufw status
+printf "%b\n" "${NC}"
