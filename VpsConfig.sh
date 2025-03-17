@@ -38,6 +38,12 @@ function validate_hostname {
 #----------------------- 主逻辑 -----------------------#
 check_root
 
+# 初始化配置跟踪变量
+CURRENT_HOSTNAME=$(hostname)
+CURRENT_SSH_PORT=$(grep -E "^Port" /etc/ssh/sshd_config | awk '{print $2}' || echo "22")
+CURRENT_DNS=$(grep -E "^nameserver" /etc/resolv.conf 2>/dev/null | awk '{print $2}' | tr '\n' ' ')
+CURRENT_SWAP=$(swapon --show=NAME,SIZE --noheadings | awk '{print $1 " (" $2 ")"}' | tr '\n' ',' | sed 's/,$//')
+
 # 更新系统
 log_success "更新系统源并升级..."
 apt update && apt upgrade -y || log_error "系统更新失败"
@@ -46,7 +52,9 @@ apt update && apt upgrade -y || log_error "系统更新失败"
 log_success "安装软件包..."
 apt install -y unzip curl wget sudo fail2ban rsyslog systemd-timesyncd ufw htop cron || log_error "软件安装失败"
 
-# 修改 hostname (关键修复点)
+# ---------------------- 配置修改部分 ---------------------- #
+# [1] 修改 hostname
+echo -e "\n${YELLOW}当前 hostname: $CURRENT_HOSTNAME${NC}"
 read -p "$(printf "%b" "${GREEN}是否修改 hostname? (y/N)${NC} ")" modify_hostname
 if [[ "$modify_hostname" =~ ^[Yy]$ ]]; then
     while true; do
@@ -56,6 +64,7 @@ if [[ "$modify_hostname" =~ ^[Yy]$ ]]; then
             if ! grep -q "$new_hostname" /etc/hosts; then
                 sed -i "1s/^/127.0.0.1\t$new_hostname\n/" /etc/hosts
             fi
+            CURRENT_HOSTNAME=$new_hostname  # 更新跟踪变量
             break
         else
             log_warn "hostname 只能包含字母、数字和短横线，且长度不超过63字符"
@@ -63,48 +72,27 @@ if [[ "$modify_hostname" =~ ^[Yy]$ ]]; then
     done
 fi
 
-# 修改 SSH 端口
+# [2] 修改 SSH 端口
+echo -e "\n${YELLOW}当前 SSH 端口: $CURRENT_SSH_PORT${NC}"
 log_success "修改 SSH 端口..."
 while true; do
-    read -p "$(printf "%b" "${GREEN}请输入新的 SSH 端口（默认 22）: ${NC}")" ssh_port
-    ssh_port=${ssh_port:-22}
+    read -p "$(printf "%b" "${GREEN}请输入新的 SSH 端口（默认 $CURRENT_SSH_PORT）: ${NC}")" ssh_port
+    ssh_port=${ssh_port:-$CURRENT_SSH_PORT}
     if validate_port "$ssh_port"; then
+        CURRENT_SSH_PORT=$ssh_port  # 更新跟踪变量
         break
     else
         log_warn "端口必须是 1-65535 之间的整数！"
     fi
 done
 
-# 备份 SSH 配置
+# 备份并修改 SSH 配置
 cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
 sed -i -E "s/^#?(Port|X11Forwarding) .*/Port $ssh_port\nX11Forwarding no/" /etc/ssh/sshd_config
 systemctl restart ssh || log_error "SSH 服务重启失败"
 
-# 配置 fail2ban
-log_success "配置 fail2ban..."
-tee /etc/fail2ban/jail.local > /dev/null << EOF
-[DEFAULT]
-ignoreip = 127.0.0.1
-bantime = 86400
-maxretry = 3
-findtime = 1800
-banaction = iptables-multiport
-backend = systemd
-[sshd]
-enabled = true
-port = $ssh_port
-filter = sshd
-logpath = /var/log/auth.log
-
-EOF
-
-# 配置 UFW
-log_success "配置防火墙..."
-ufw allow "$ssh_port"
-read -p "$(printf "%b" "${YELLOW}即将启用防火墙，请确认已放行必要端口！继续？(y/N)${NC} ")" confirm
-[[ "$confirm" =~ ^[Yy]$ ]] && ufw --force enable || log_warn "已跳过防火墙启用步骤"
-
-# 修改 DNS
+# [3] 配置 DNS
+echo -e "\n${YELLOW}当前 DNS 服务器: ${CURRENT_DNS:-无配置}${NC}"
 read -p "$(printf "%b" "${GREEN}是否修改 DNS 配置？(y/N)${NC} ")" modify_dns
 if [[ "$modify_dns" =~ ^[Yy]$ ]]; then
     while true; do
@@ -125,6 +113,7 @@ if [[ "$modify_dns" =~ ^[Yy]$ ]]; then
             chattr -i /etc/resolv.conf 2>/dev/null
             printf "nameserver %s\n" $dns_servers > /etc/resolv.conf
             chattr +i /etc/resolv.conf
+            CURRENT_DNS=$dns_servers  # 更新跟踪变量
             break
         else
             log_warn "包含无效的 IP 地址，请重新输入！"
@@ -132,7 +121,8 @@ if [[ "$modify_dns" =~ ^[Yy]$ ]]; then
     done
 fi
 
-# 配置 Swap
+# [4] 配置 Swap
+echo -e "\n${YELLOW}当前 Swap 配置: ${CURRENT_SWAP:-无}${NC}"
 read -p "$(printf "%b" "${GREEN}是否配置 Swap？(y/N)${NC} ")" modify_swap
 if [[ "$modify_swap" =~ ^[Yy]$ ]]; then
     while true; do
@@ -166,16 +156,16 @@ if [[ "$modify_swap" =~ ^[Yy]$ ]]; then
     
     sysctl vm.swappiness=$SWAPPINESS
     echo "vm.swappiness=$SWAPPINESS" >> /etc/sysctl.conf
+    CURRENT_SWAP="${SWAP_FILE} (${SWAP_SIZE}MB)"  # 更新跟踪变量
 fi
 
-# 服务管理
-log_success "启动服务..."
-systemctl restart fail2ban && systemctl enable fail2ban || log_warn "fail2ban 配置失败"
-systemctl restart systemd-timesyncd && systemctl enable systemd-timesyncd
-
+# ---------------------- 最终配置汇总 ---------------------- #
 log_success "所有配置已完成！"
-printf "%b\n" "${YELLOW}重要提示："
-echo "1. 请确认可通过端口 $ssh_port 连接 SSH"
-echo "2. 当前防火墙规则："
+echo -e "${YELLOW}\n==================== 最终配置汇总 ====================${NC}"
+echo -e "1. Hostname: ${GREEN}$CURRENT_HOSTNAME${NC}"
+echo -e "2. SSH 端口: ${GREEN}$CURRENT_SSH_PORT${NC}"
+echo -e "3. DNS 服务器: ${GREEN}${CURRENT_DNS:-未修改}${NC}"
+echo -e "4. Swap 配置: ${GREEN}${CURRENT_SWAP:-未修改}${NC}"
+echo -e "${YELLOW}===================================================${NC}"
+echo -e "\n${YELLOW}防火墙状态：${NC}"
 ufw status
-printf "%b\n" "${NC}"
