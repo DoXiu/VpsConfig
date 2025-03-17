@@ -91,7 +91,10 @@ done
  
 # 备份并修改 SSH 配置 
 cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak  
-sed -i -E "s/^#?(Port|X11Forwarding) .*/Port $ssh_port\nX11Forwarding no/" /etc/ssh/sshd_config 
+# 精准处理 Port 配置 
+sed -i "/^Port/d" /etc/ssh/sshd_config        # 删除所有 Port 行 
+sed -i "/^#Port/d" /etc/ssh/sshd_config       # 删除所有注释的 Port 行 
+echo "Port $ssh_port" >> /etc/ssh/sshd_config # 写入新端口  
 systemctl restart ssh || log_error "SSH 服务重启失败"
  
 # [3] 配置 fail2ban 
