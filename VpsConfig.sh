@@ -89,7 +89,7 @@ enabled = true
 filter = sshd
 port = $ssh_port
 maxretry = 3
-findtime = 300
+findtime = 3600
 bantime = -1
 banaction = ufw
 logpath = /var/log/auth.log
@@ -99,7 +99,7 @@ EOF
 log_success "配置防火墙..."
 ufw allow "$ssh_port"
 read -p "$(printf "%b" "${YELLOW}即将启用防火墙，请确认已放行必要端口！继续？(y/N)${NC} ")" confirm
-[[ "$confirm" =~ ^[Yy]$ ]] && ufw enable || log_warn "已跳过防火墙启用步骤"
+[[ "$confirm" =~ ^[Yy]$ ]] && ufw --force enable || log_warn "已跳过防火墙启用步骤"
 
 # 修改 DNS
 read -p "$(printf "%b" "${GREEN}是否修改 DNS 配置？(y/N)${NC} ")" modify_dns
