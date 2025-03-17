@@ -7,6 +7,6 @@
 通过交互的方式创建swap交换文件并启用
 
 使用方法：
-wget -N --no-check-certificate "https://raw.githubusercontent.com/DoXiu/VpsConfig/refs/heads/main/VpsConfig.sh" && chmod +x VpsConfig.sh && ./VpsConfig.sh
+wget -N --no-check-certificate "https://raw.githubusercontent.com/DoXiu/VpsConfig/refs/heads/main/VpsConfig.sh" && bash VpsConfig.sh
 
 根据 nodeseke 帖子 https://www.nodeseek.com/post-290050-1 修改
