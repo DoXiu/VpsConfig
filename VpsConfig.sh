@@ -44,7 +44,7 @@ apt update && apt upgrade -y || log_error "系统更新失败"
 
 # 安装软件包
 log_success "安装软件包..."
-apt install -y unzip curl wget sudo fail2ban rsyslog systemd-timesyncd ufw htop || log_error "软件安装失败"
+apt install -y unzip curl wget sudo fail2ban rsyslog systemd-timesyncd ufw htop cron || log_error "软件安装失败"
 
 # 修改 hostname (关键修复点)
 read -p "$(printf "%b" "${GREEN}是否修改 hostname? (y/N)${NC} ")" modify_hostname
