@@ -1,16 +1,16 @@
 #!/bin/bash
 set -euo pipefail
 
-# 颜色定义
-GREEN='\e[32m'
-RED='\e[31m'
-YELLOW='\e[33m'
-NC='\e[0m'
+# 颜色定义（兼容性写法）
+GREEN='\033[32m'
+RED='\033[31m'
+YELLOW='\033[33m'
+NC='\033[0m'
 
 # 日志函数
-log_success() { echo -e "${GREEN}[✓] $1${NC}"; }
-log_error() { echo -e "${RED}[✗] 错误：$1${NC}" >&2; exit 1; }
-log_warn() { echo -e "${YELLOW}[!] $1${NC}"; }
+log_success() { printf "%b\n" "${GREEN}[✓] $1${NC}"; }
+log_error() { printf "%b\n" "${RED}[✗] 错误：$1${NC}" >&2; exit 1; }
+log_warn() { printf "%b\n" "${YELLOW}[!] $1${NC}"; }
 
 # 检查 root 权限
 check_root() {
@@ -19,7 +19,6 @@ check_root() {
     fi
 }
 
-#----------- 修复点：调整函数定义语法 -----------#
 # 输入验证函数
 function validate_port {
     local port=$1
@@ -28,7 +27,6 @@ function validate_port {
 
 function validate_ip {
     local ip=$1
-    # 修复点：转义正则表达式括号
     [[ "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || return 1
 }
 
@@ -48,8 +46,8 @@ apt update && apt upgrade -y || log_error "系统更新失败"
 log_success "安装软件包..."
 apt install -y unzip curl wget sudo fail2ban rsyslog systemd-timesyncd ufw htop || log_error "软件安装失败"
 
-# 修改 hostname
-read -p "$(echo -e ${GREEN}是否修改 hostname? (y/N)${NC}) " modify_hostname
+# 修改 hostname (关键修复点)
+read -p "$(printf "%b" "${GREEN}是否修改 hostname? (y/N)${NC} ")" modify_hostname
 if [[ "$modify_hostname" =~ ^[Yy]$ ]]; then
     while true; do
         read -p "请输入新的 hostname: " new_hostname
@@ -68,7 +66,7 @@ fi
 # 修改 SSH 端口
 log_success "修改 SSH 端口..."
 while true; do
-    read -p "请输入新的 SSH 端口（默认 22）: " ssh_port
+    read -p "$(printf "%b" "${GREEN}请输入新的 SSH 端口（默认 22）: ${NC}")" ssh_port
     ssh_port=${ssh_port:-22}
     if validate_port "$ssh_port"; then
         break
@@ -100,11 +98,11 @@ EOF
 # 配置 UFW
 log_success "配置防火墙..."
 ufw allow "$ssh_port"
-read -p "$(echo -e ${YELLOW}即将启用防火墙，请确认已放行必要端口！继续？(y/N)${NC}) " confirm
+read -p "$(printf "%b" "${YELLOW}即将启用防火墙，请确认已放行必要端口！继续？(y/N)${NC} ")" confirm
 [[ "$confirm" =~ ^[Yy]$ ]] && ufw enable || log_warn "已跳过防火墙启用步骤"
 
 # 修改 DNS
-read -p "$(echo -e ${GREEN}是否修改 DNS 配置？(y/N)${NC}) " modify_dns
+read -p "$(printf "%b" "${GREEN}是否修改 DNS 配置？(y/N)${NC} ")" modify_dns
 if [[ "$modify_dns" =~ ^[Yy]$ ]]; then
     while true; do
         read -p "请输入 DNS 服务器（多个用空格分隔）: " dns_servers
@@ -114,10 +112,9 @@ if [[ "$modify_dns" =~ ^[Yy]$ ]]; then
         done
         
         if $all_valid; then
-            # 处理 systemd-resolved 冲突
             if systemctl is-active --quiet systemd-resolved; then
                 log_warn "检测到 systemd-resolved 正在运行，建议禁用后再修改 DNS"
-                read -p "是否停止 systemd-resolved 服务？(y/N) " stop_resolved
+                read -p "$(printf "%b" "${YELLOW}是否停止 systemd-resolved 服务？(y/N) ${NC}")" stop_resolved
                 [[ "$stop_resolved" =~ ^[Yy]$ ]] && systemctl stop systemd-resolved
             fi
             
@@ -133,7 +130,7 @@ if [[ "$modify_dns" =~ ^[Yy]$ ]]; then
 fi
 
 # 配置 Swap
-read -p "$(echo -e ${GREEN}是否配置 Swap？(y/N)${NC}) " modify_swap
+read -p "$(printf "%b" "${GREEN}是否配置 Swap？(y/N)${NC} ")" modify_swap
 if [[ "$modify_swap" =~ ^[Yy]$ ]]; then
     while true; do
         read -p "Swap 大小 (MB，建议为内存的1-2倍): " SWAP_SIZE
@@ -174,8 +171,8 @@ systemctl restart fail2ban && systemctl enable fail2ban || log_warn "fail2ban �
 systemctl restart systemd-timesyncd && systemctl enable systemd-timesyncd
 
 log_success "所有配置已完成！"
-echo -e "\n${YELLOW}重要提示："
+printf "%b\n" "${YELLOW}重要提示："
 echo "1. 请确认可通过端口 $ssh_port 连接 SSH"
 echo "2. 当前防火墙规则："
 ufw status
-echo -e "${NC}"
+printf "%b\n" "${NC}"
