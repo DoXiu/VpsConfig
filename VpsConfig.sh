@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail  # 严格模式：错误退出、未定义变量检测、管道错误处理
+set -euo pipefail
 
 # 颜色定义
 GREEN='\e[32m'
@@ -19,18 +19,20 @@ check_root() {
     fi
 }
 
+#----------- 修复点：调整函数定义语法 -----------#
 # 输入验证函数
-validate_port() {
+function validate_port {
     local port=$1
     [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || return 1
 }
 
-validate_ip() {
+function validate_ip {
     local ip=$1
-    [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+    # 修复点：转义正则表达式括号
+    [[ "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || return 1
 }
 
-validate_hostname() {
+function validate_hostname {
     local hostname=$1
     [[ "$hostname" =~ ^[a-zA-Z0-9-]{1,63}$ ]] || return 1
 }
