@@ -58,7 +58,7 @@ apt install -y unzip curl wget sudo fail2ban rsyslog systemd-timesyncd ufw htop 
 # ---------------------- 配置修改部分 ---------------------- #
 # [1] 修改 hostname 
 echo -e "\n${YELLOW}当前 hostname: $CURRENT_HOSTNAME${NC}"
-read -p "$(printf "%b" "${GREEN}是否修改 hostname? (y/N)${NC} ")" modify_hostname 
+read -p "$(printf "%b" "${GREEN}是否修改 hostname? (y/n)默认n${NC} ")" modify_hostname 
 if [[ "$modify_hostname" =~ ^[Yy]$ ]]; then 
     while true; do 
         read -p "请输入新的 hostname: " new_hostname 
@@ -77,7 +77,6 @@ fi
 
 # [2] 修改 SSH 端口
 echo -e "\n${YELLOW}当前 SSH 端口: $CURRENT_SSH_PORT${NC}"
-log_success "修改 SSH 端口..."
 while true; do
     read -p "$(printf "%b" "${GREEN}请输入新的 SSH 端口（默认 $CURRENT_SSH_PORT）: ${NC}")" ssh_port
     ssh_port=${ssh_port:-$CURRENT_SSH_PORT}
@@ -101,7 +100,7 @@ echo -e "${GREEN}配置 ufw...${NC}"
 ufw allow "$ssh_port"
 
 # [3] 配置 fail2ban 
-read -p "$(printf "%b" "${GREEN}是否修改 fail2ban 配置？(y/N)${NC} ")" modify_fail2ban 
+read -p "$(printf "%b" "${GREEN}是否修改 fail2ban 配置？(y/n)默认n${NC} ")" modify_fail2ban 
 if [[ "$modify_fail2ban" =~ ^[Yy]$ ]]; then 
     # 修改最大错误次数 
     while true; do 
@@ -150,7 +149,7 @@ fi
 
 # [4] 配置 DNS
 echo -e "\n${YELLOW}当前 DNS 服务器: ${CURRENT_DNS:-无配置}${NC}"
-read -p "$(printf "%b" "${GREEN}是否修改 DNS 配置？(y/N)${NC} ")" modify_dns
+read -p "$(printf "%b" "${GREEN}是否修改 DNS 配置？(y/n)默认n${NC} ")" modify_dns
 if [[ "$modify_dns" =~ ^[Yy]$ ]]; then
     while true; do
         read -p "请输入 DNS 服务器（多个用空格分隔）: " dns_servers
@@ -180,7 +179,7 @@ fi
 
 # [5] 配置 Swap
 echo -e "\n${YELLOW}当前 Swap 配置: ${CURRENT_SWAP:-无}${NC}"
-read -p "$(printf "%b" "${GREEN}是否配置 Swap？(y/N)${NC} ")" modify_swap
+read -p "$(printf "%b" "${GREEN}是否配置 Swap？(y/n)默认n${NC} ")" modify_swap
 if [[ "$modify_swap" =~ ^[Yy]$ ]]; then
     while true; do
         read -p "Swap 大小 (MB，建议为内存的1-2倍): " SWAP_SIZE
