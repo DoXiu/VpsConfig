@@ -2,7 +2,7 @@
 
 *自动更新软件源并升级
 
-*自动安装unzip curl wget sudo fail2ban rsyslog systemd-timesyncd ufw htop
+*自动安装unzip curl wget sudo fail2ban rsyslog systemd-timesyncd ufw htop cron
 
 *根据交互的方式修改hostname
 
