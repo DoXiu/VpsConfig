@@ -100,8 +100,11 @@ fi
 systemctl restart ssh || log_error "SSH 服务重启失败"
 # 配置 ufw
 echo -e "${GREEN}配置 ufw...${NC}"
-if ! ufw status | grep -q "$ssh_port"; then
-  ufw allow "$ssh_port"
+if ufw status | grep -q "$CURRENT_SSH_PORT"; then
+    ufw allow "$CURRENT_SSH_PORT"
+fi
+if [ "$CURRENT_SSH_PORT" != "22" ] && ufw status | grep -q "22"; then
+    ufw delete allow 22
 fi
 
 # [3] 配置 fail2ban 
