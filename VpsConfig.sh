@@ -275,7 +275,7 @@ if [[ "$enable_bbr" =~ ^[Yy]$ ]]; then
 # BBR 拥塞控制
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
-net.core.fq_flow_limit = 4096
+
 
 # ECN 支持
 net.ipv4.tcp_ecn = 2
