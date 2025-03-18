@@ -14,6 +14,6 @@
 
 使用方法：
 
-bash <(wget -qO- --no-check-certificate "https://raw.githubusercontent.com/DoXiu/VpsConfig/refs/heads/main/VpsConfig.sh")
+wget -N https://raw.githubusercontent.com/DoXiu/VpsConfig/refs/heads/main/VpsConfig.sh && chmod +x VpsConfig.sh && ./VpsConfig.sh
 
 根据 nodeseke 帖子 https://www.nodeseek.com/post-290050-1 修改
