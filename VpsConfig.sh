@@ -10,7 +10,7 @@ NC='\033[0m'
 # 日志函数 
 log_success() { printf "%b\n" "${GREEN}[✓] $1${NC}"; }
 log_error() { printf "%b\n" "${RED}[✗] 错误：$1${NC}" >&2; exit 1; }
-log_warn() { printf "%b\n" "${YELLOW}[!] $1${NC}"; }
+log_warn()    { printf "%b\n" "${YELLOW}[!] $1${NC}"; }
 
 # 检查 root 权限 
 check_root() {
@@ -20,19 +20,33 @@ check_root() {
 }
 
 # 输入验证函数 
-function validate_port {
+validate_port() {
     local port=$1 
     [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || return 1 
 }
 
-function validate_ip {
-    local ip=$1 
-    [[ "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || return 1 
+validate_ip() {
+    local ip=$1
+    local IFS=.
+    local -a octets=($ip)
+    # 必须为四个部分
+    [ ${#octets[@]} -eq 4 ] || return 1
+    for octet in "${octets[@]}"; do
+        [[ "$octet" =~ ^[0-9]+$ ]] || return 1
+        if (( octet < 0 || octet > 255 )); then
+            return 1
+        fi
+    done
 }
 
-function validate_hostname {
-    local hostname=$1 
-    [[ "$hostname" =~ ^[a-zA-Z0-9-]{1,63}$ ]] || return 1 
+validate_hostname() {
+    local hostname=$1
+    # 支持 FQDN：各标签由字母、数字开头和结尾，中间可包含短横线，长度1-63字符
+    if [[ "$hostname" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*$ ]]; then
+        return 0
+    else
+        return 1
+    fi
 }
 
 #----------------------- 主逻辑 -----------------------#
@@ -40,13 +54,15 @@ check_root
 
 # 初始化配置跟踪变量 
 CURRENT_HOSTNAME=$(hostname)
-CURRENT_SSH_PORT=$(grep -E "^Port" /etc/ssh/sshd_config | awk '{print $2}' || echo "22")
+CURRENT_SSH_PORT=$(grep -E "^[[:space:]]*Port[[:space:]]+" /etc/ssh/sshd_config | awk '{print $2}' || echo "22")
 CURRENT_SSH_PORT=${CURRENT_SSH_PORT:-22}  # 若提取失败，默认使用22
 CURRENT_DNS=$(grep -E "^nameserver" /etc/resolv.conf 2>/dev/null | awk '{printf "%s ", $2}' | sed 's/ $//')
 CURRENT_SWAP=$(swapon --show=NAME,SIZE --noheadings | awk '{print $1 " (" $2 ")"}' | tr '\n' ',' | sed 's/,$//')
 CURRENT_FAIL2BAN_MAXRETRIES="3"
 CURRENT_FAIL2BAN_BANTIME="24"
 CURRENT_FAIL2BAN_FINDTIME="3600"
+CURRENT_BBR="未配置"
+CURRENT_IPV6_STATUS="未修改"
 
 # 更新系统 
 log_success "更新系统源并升级..."
@@ -59,25 +75,30 @@ apt install -y unzip curl wget sudo fail2ban rsyslog systemd-timesyncd ufw htop 
 # ---------------------- 配置修改部分 ---------------------- #
 # [1] 修改 hostname 
 echo -e "\n${YELLOW}当前 hostname: $CURRENT_HOSTNAME${NC}"
-read -p "$(printf "%b" "${GREEN}是否修改 hostname? (y/n)默认n${NC} ")" modify_hostname 
+read -p "$(printf "%b" "${GREEN}是否修改 hostname? (y/n) 默认 n: ${NC}")" modify_hostname 
 if [[ "$modify_hostname" =~ ^[Yy]$ ]]; then 
     while true; do 
         read -p "请输入新的 hostname: " new_hostname 
-        if validate_hostname "$new_hostname"; then 
+        if validate_hostname "$new_hostname"; then
+            # 修改系统 hostname
             hostnamectl set-hostname "$new_hostname" || log_error "修改 hostname 失败"
-            if ! grep -q "$new_hostname" /etc/hosts; then 
-                sed -i "1s/^/127.0.0.1\t$new_hostname\n/" /etc/hosts 
+            # 更新 /etc/hosts：如果包含旧 hostname则替换，否则追加新行
+            if grep -qE "127\.[0-9]+\.[0-9]+\.[0-9]+\s+.*\b$CURRENT_HOSTNAME\b" /etc/hosts; then
+                sed -i "s/\b$CURRENT_HOSTNAME\b/$new_hostname/g" /etc/hosts
+            elif ! grep -qE "127\.[0-9]+\.[0-9]+\.[0-9]+\s+.*\b$new_hostname\b" /etc/hosts; then
+                echo -e "127.0.0.1\t$new_hostname" >> /etc/hosts
             fi 
             CURRENT_HOSTNAME=$new_hostname 
             break 
         else 
-            log_warn "hostname 只能包含字母、数字和短横线，且长度不超过63字符"
+            log_warn "hostname 格式不正确，请输入合法的 FQDN 或单个标签（字母、数字和短横线，且不能以短横线开始或结束）"
         fi 
     done 
 fi 
 
 # [2] 修改 SSH 端口
 echo -e "\n${YELLOW}当前 SSH 端口: $CURRENT_SSH_PORT${NC}"
+old_ssh_port=$CURRENT_SSH_PORT
 while true; do
     read -p "$(printf "%b" "${GREEN}请输入新的 SSH 端口（默认 $CURRENT_SSH_PORT）: ${NC}")" ssh_port
     ssh_port=${ssh_port:-$CURRENT_SSH_PORT}
@@ -90,25 +111,31 @@ while true; do
 done
 
 # 备份并修改 SSH 配置
-cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak  
-# 精准处理 Port 配置
-if grep -q "^Port" /etc/ssh/sshd_config; then
-  sed -i "s/^Port .*/Port $CURRENT_SSH_PORT/" /etc/ssh/sshd_config
+cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
+if grep -qE '^[[:space:]]*Port[[:space:]]+[0-9]+' /etc/ssh/sshd_config; then
+    # 替换未被注释的 Port 行
+    sed -i -E "s/^[[:space:]]*Port[[:space:]]+[0-9]+/Port $CURRENT_SSH_PORT/" /etc/ssh/sshd_config
 else
-  echo "Port $CURRENT_SSH_PORT" >> /etc/ssh/sshd_config
+    # 无有效的 Port 配置，则追加
+    echo "Port $CURRENT_SSH_PORT" >> /etc/ssh/sshd_config
 fi
 systemctl restart ssh || log_error "SSH 服务重启失败"
-# 配置 ufw
+
+# 更新 ufw 防火墙规则：先删除旧端口规则，再添加新端口规则
 echo -e "${GREEN}配置 ufw...${NC}"
-if ufw status | grep -q "$CURRENT_SSH_PORT"; then
-    ufw allow "$CURRENT_SSH_PORT"
+if [ "$old_ssh_port" != "$CURRENT_SSH_PORT" ]; then
+    # 删除旧端口规则（如果存在）
+    if ufw status | grep -qE "($old_ssh_port)/tcp"; then
+        ufw delete allow "$old_ssh_port/tcp"
+    fi
 fi
-if [ "$CURRENT_SSH_PORT" != "22" ] && ufw status | grep -q "22"; then
-    ufw delete allow 22
+# 添加新端口规则（如果未存在）
+if ! ufw status | grep -qE "($CURRENT_SSH_PORT)/tcp"; then
+    ufw allow "$CURRENT_SSH_PORT/tcp"
 fi
 
 # [3] 配置 fail2ban 
-read -p "$(printf "%b" "${GREEN}是否修改 fail2ban 配置？(y/n)默认n${NC} ")" modify_fail2ban 
+read -p "$(printf "%b" "${GREEN}是否修改 fail2ban 配置？(y/n) 默认 n: ${NC}")" modify_fail2ban 
 if [[ "$modify_fail2ban" =~ ^[Yy]$ ]]; then 
     # 修改最大错误次数 
     while true; do 
@@ -133,8 +160,8 @@ if [[ "$modify_fail2ban" =~ ^[Yy]$ ]]; then
         [[ "$findtime" =~ ^[0-9]+$ ]] && break || log_warn "请输入正整数"
     done 
 
- # 创建配置文件 
- cat > /etc/fail2ban/jail.local << EOF
+    # 创建配置文件 
+    cat > /etc/fail2ban/jail.local << EOF
 [DEFAULT]
 ignoreip = 127.0.0.1/8
 bantime = $bantime_seconds
@@ -157,7 +184,7 @@ fi
 
 # [4] 配置 DNS
 echo -e "\n${YELLOW}当前 DNS 服务器: ${CURRENT_DNS:-无配置}${NC}"
-read -p "$(printf "%b" "${GREEN}是否修改 DNS 配置？(y/n)默认n${NC} ")" modify_dns
+read -p "$(printf "%b" "${GREEN}是否修改 DNS 配置？(y/n) 默认 n: ${NC}")" modify_dns
 if [[ "$modify_dns" =~ ^[Yy]$ ]]; then
     while true; do
         read -p "请输入 DNS 服务器（多个用空格分隔）: " dns_servers
@@ -173,8 +200,8 @@ if [[ "$modify_dns" =~ ^[Yy]$ ]]; then
                 [[ "$stop_resolved" =~ ^[Yy]$ ]] && systemctl stop systemd-resolved
             fi
             
-            cp /etc/resolv.conf   /etc/resolv.conf.bak  
-            chattr -i /etc/resolv.conf   2>/dev/null
+            cp /etc/resolv.conf /etc/resolv.conf.bak  
+            chattr -i /etc/resolv.conf 2>/dev/null
             printf "nameserver %s\n" $dns_servers > /etc/resolv.conf  
             chattr +i /etc/resolv.conf  
             CURRENT_DNS=$dns_servers  # 更新跟踪变量
@@ -187,19 +214,14 @@ fi
 
 # [5] 配置 Swap
 echo -e "\n${YELLOW}当前 Swap 配置: ${CURRENT_SWAP:-无}${NC}"
-read -p "$(printf "%b" "${GREEN}是否配置 Swap？(y/n)默认n${NC} ")" modify_swap
+read -p "$(printf "%b" "${GREEN}是否配置 Swap？(y/n) 默认 n: ${NC}")" modify_swap
 if [[ "$modify_swap" =~ ^[Yy]$ ]]; then
     while true; do
         read -p "Swap 大小 (MB，建议为内存的1-2倍): " SWAP_SIZE
         [[ "$SWAP_SIZE" =~ ^[0-9]+$ ]] && break || log_warn "请输入正整数"
     done
 
-    while true; do
-        read -p "Swappiness 值 (1-100，默认60): " SWAPPINESS
-        SWAPPINESS=${SWAPPINESS:-60}
-        [[ "$SWAPPINESS" =~ ^[0-9]+$ ]] && [ "$SWAPPINESS" -ge 1 ] && [ "$SWAPPINESS" -le 100 ] && break
-        log_warn "请输入1-100之间的整数"
-    done
+    
 
     SWAP_FILE=${SWAP_FILE:-/swapfile}
     if [ -n "$(swapon --show=NAME --noheadings)" ]; then
@@ -221,17 +243,117 @@ if [[ "$modify_swap" =~ ^[Yy]$ ]]; then
     swapon "$SWAP_FILE" || log_error "swapon 失败"
     echo "$SWAP_FILE none swap sw 0 0" >> /etc/fstab
     
-    sysctl vm.swappiness=$SWAPPINESS  
-    echo "vm.swappiness=$SWAPPINESS"   >> /etc/sysctl.conf  
+   
     CURRENT_SWAP="${SWAP_FILE} (${SWAP_SIZE}MB)"  # 更新跟踪变量
 fi
+
+# [6] 配置 BBR 和 TCP 调优
+echo -e "\n${YELLOW}当前 TCP 拥塞控制算法：$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)${NC}"
+read -p "$(printf "%b" "${GREEN}是否配置 BBR 和 TCP 窗口调优？(y/n) 默认 n: ${NC}")" enable_bbr
+if [[ "$enable_bbr" =~ ^[Yy]$ ]]; then
+    # 输入带宽和延迟
+    while true; do
+        read -p "请输入服务器带宽（Mbps）：" bandwidth
+        [[ "$bandwidth" =~ ^[0-9]+$ ]] && [ "$bandwidth" -gt 0 ] && break || log_warn "带宽必须为正整数"
+    done
+    while true; do
+        read -p "请输入网络平均延迟（ms）：" latency
+        [[ "$latency" =~ ^[0-9]+$ ]] && [ "$latency" -gt 0 ] && break || log_warn "延迟必须为正整数"
+    done
+    read -p "是否关闭 IPv6？（y/n）默认 n: " disable_ipv6
+
+    # 计算带宽延迟积（单位：字节）公式：带宽(Mbps)*延迟(ms)*125
+    bdp=$(( (bandwidth * latency * 125) ))  
+
+    # 备份 sysctl 配置
+    cp /etc/sysctl.conf /etc/sysctl.conf.bak
+
+    # 生成调优配置
+    cat > /etc/sysctl.conf << EOF
+
+# --------------------- BBR & TCP 调优配置 --------------------- #
+# BBR 拥塞控制
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+net.core.fq_flow_limit = 4096
+
+# ECN 支持
+net.ipv4.tcp_ecn = 2
+
+# 文件描述符限制
+fs.file-max = 1000000
+
+# TCP 缓冲区优化（基于带宽延迟积）
+net.core.rmem_max = $bdp
+net.core.wmem_max = $bdp
+net.ipv4.tcp_wmem = 4096 16384 $bdp
+net.ipv4.tcp_rmem = 4096 87380 $bdp
+
+# 连接优化
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_window_scaling = 1
+net.ipv4.tcp_adv_win_scale = 1
+net.ipv4.tcp_moderate_rcvbuf = 1
+net.ipv4.tcp_no_metrics_save = 1
+net.ipv4.tcp_frto = 2
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_fin_timeout = 10
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_sack = 1
+net.ipv4.tcp_fack = 1
+
+# 端口范围调整
+net.ipv4.ip_local_port_range = 1024 65535
+
+# 连接跟踪表大小
+net.netfilter.nf_conntrack_max = 65536
+
+# 性能优化
+net.ipv4.tcp_syncookies = 0
+net.ipv4.tcp_timestamps = 0
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.icmp_ratelimit = 1000
+net.ipv4.icmp_ratemask = 8800
+net.ipv4.tcp_low_latency = 1
+
+# 高负载优化
+net.core.rps_sock_flow_entries = 32768
+net.core.netdev_max_backlog = 500000
+
+# 网络转发
+net.ipv4.conf.all.route_localnet = 1
+net.ipv4.ip_forward = 1
+net.ipv4.conf.all.forwarding = 1
+net.ipv4.conf.default.forwarding = 1
+EOF
+
+    # 关闭 IPv6
+    if [[ "$disable_ipv6" =~ ^[Yy]$ ]]; then
+        cat >> /etc/sysctl.conf << EOF
+
+# 禁用 IPv6
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
+EOF
+        
+        CURRENT_IPV6_STATUS="已禁用"
+    else
+        CURRENT_IPV6_STATUS="已启用"
+    fi
+
+    # 应用配置
+    sysctl -p
+    CURRENT_BBR="已启用 (BBR + FQ)"
+fi
+  
 
 # 启动服务并设置开机自启
 log_success "启动并设置 fail2ban 和 systemd-timesyncd 开机自启..."
 systemctl start fail2ban systemd-timesyncd
 systemctl enable fail2ban systemd-timesyncd
 # 启用 ufw
-read -p "$(printf "%b" "${YELLOW}即将启用防火墙，请确认已放行必要端口！继续？(y/n)${NC} ")" confirm
+read -p "$(printf "%b" "${YELLOW}即将启用防火墙，请确认已放行必要端口！继续？(y/n) ${NC}")" confirm
 [[ "$confirm" =~ ^[Yy]$ ]] && ufw --force enable || log_warn "已跳过防火墙启用步骤"
 
 # ---------------------- 最终配置汇总 ---------------------- #
@@ -245,6 +367,8 @@ echo -e "   - 封禁时间: ${GREEN}$CURRENT_FAIL2BAN_BANTIME 小时${NC}"
 echo -e "   - 检测时间窗口: ${GREEN}$CURRENT_FAIL2BAN_FINDTIME 秒${NC}"
 echo -e "4. DNS 服务器: ${GREEN}${CURRENT_DNS:-未修改}${NC}"
 echo -e "5. Swap 配置: ${GREEN}${CURRENT_SWAP:-未修改}${NC}"
+echo -e "6. BBR 配置：${GREEN}${CURRENT_BBR:-未修改}${NC}"
+echo -e "7. IPv6 状态：${GREEN}${CURRENT_IPV6_STATUS}${NC}"
 echo -e "${YELLOW}===================================================${NC}"
 printf "%b\n" "${YELLOW}重要提示："
 echo "1. 请确认可通过端口 $CURRENT_SSH_PORT 连接 SSH"
