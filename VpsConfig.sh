@@ -263,7 +263,7 @@ if [[ "$enable_bbr" =~ ^[Yy]$ ]]; then
     read -p "是否关闭 IPv6？（y/n）默认 n: " disable_ipv6
 
     # 计算带宽延迟积（单位：字节）公式：带宽(Mbps)*延迟(ms)*125
-    bdp=$(( (bandwidth * latency * 125) ))  
+    bdp=$(( (bandwidth * latency * 187.5) ))  
 
     # 备份 sysctl 配置
     cp /etc/sysctl.conf /etc/sysctl.conf.bak
@@ -278,7 +278,7 @@ net.ipv4.tcp_congestion_control = bbr
 
 
 # ECN 支持
-net.ipv4.tcp_ecn = 2
+net.ipv4.tcp_ecn = 0
 
 # 文件描述符限制
 fs.file-max = 1000000
@@ -294,7 +294,6 @@ net.ipv4.tcp_fastopen = 3
 net.ipv4.tcp_window_scaling = 1
 net.ipv4.tcp_adv_win_scale = 1
 net.ipv4.tcp_moderate_rcvbuf = 1
-net.ipv4.tcp_no_metrics_save = 1
 net.ipv4.tcp_frto = 2
 net.ipv4.tcp_mtu_probing = 1
 net.ipv4.tcp_fin_timeout = 10
@@ -316,9 +315,7 @@ net.ipv4.icmp_ratelimit = 1000
 net.ipv4.icmp_ratemask = 8800
 net.ipv4.tcp_low_latency = 1
 
-# 高负载优化
-net.core.rps_sock_flow_entries = 32768
-net.core.netdev_max_backlog = 500000
+
 
 # 网络转发
 net.ipv4.conf.all.route_localnet = 1
