@@ -243,7 +243,6 @@ if [[ "$modify_swap" =~ ^[Yy]$ ]]; then
     swapon "$SWAP_FILE" || log_error "swapon 失败"
     echo "$SWAP_FILE none swap sw 0 0" >> /etc/fstab
     
-   
     CURRENT_SWAP="${SWAP_FILE} (${SWAP_SIZE}MB)"  # 更新跟踪变量
 fi
 
@@ -275,7 +274,6 @@ if [[ "$enable_bbr" =~ ^[Yy]$ ]]; then
 # BBR 拥塞控制
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
-
 
 # ECN 支持
 net.ipv4.tcp_ecn = 0
@@ -314,8 +312,6 @@ net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.icmp_ratelimit = 1000
 net.ipv4.icmp_ratemask = 8800
 net.ipv4.tcp_low_latency = 1
-
-
 
 # 网络转发
 net.ipv4.conf.all.route_localnet = 1
