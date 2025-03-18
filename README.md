@@ -12,6 +12,10 @@
 
 *通过交互的方式创建swap交换文件并启用
 
+*BBR+fq 的tcp窗口调优
+
+*ipv6 开启关闭
+
 使用方法：
 
 wget -N https://raw.githubusercontent.com/DoXiu/VpsConfig/refs/heads/main/VpsConfig.sh && chmod +x VpsConfig.sh && ./VpsConfig.sh
