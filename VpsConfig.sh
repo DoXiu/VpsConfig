@@ -9,7 +9,7 @@ NC='\033[0m'
 
 # 日志函数 
 log_success() { printf "%b\n" "${GREEN}[✓] $1${NC}"; }
-log_error()   { printf "%b\n" "${RED}[✗] 错误：$1${NC}" >&2; exit 1; }
+log_error() { printf "%b\n" "${RED}[✗] 错误：$1${NC}" >&2; exit 1; }
 log_warn()    { printf "%b\n" "${YELLOW}[!] $1${NC}"; }
 
 # 检查 root 权限 
@@ -121,6 +121,7 @@ else
 fi
 systemctl restart ssh || log_error "SSH 服务重启失败"
 
+
 # [3] 配置 fail2ban 
 read -p "$(printf "%b" "${GREEN}是否修改 fail2ban 配置？(y/n) 默认 n: ${NC}")" modify_fail2ban 
 if [[ "$modify_fail2ban" =~ ^[Yy]$ ]]; then 
@@ -171,51 +172,27 @@ fi
 
 # [4] 配置 DNS
 echo -e "\n${YELLOW}当前 DNS 服务器: ${CURRENT_DNS:-无配置}${NC}"
-
-# 检查 systemd-resolved 或 openresolv 状态
-if systemctl is-active --quiet systemd-resolved || dpkg -l openresolv &>/dev/null; then
-    log_warn "检测到 systemd-resolved 正在运行或 openresolv 已安装。"
-    read -p "$(printf "%b" "${YELLOW}是否禁用 systemd-resolved 并卸载 openresolv（如果已安装）？(y/n): ${NC}")" disable_choice
-    if [[ "$disable_choice" =~ ^[Yy]$ ]]; then
-        if systemctl is-active --quiet systemd-resolved; then
-            log_success "停止并禁用 systemd-resolved 服务..."
-            systemctl stop systemd-resolved
-            systemctl disable systemd-resolved
-        fi
-        if dpkg -l openresolv &>/dev/null; then
-            log_success "卸载 openresolv..."
-            apt-get remove -y openresolv
-        fi
-        # 删除现有的 /etc/resolv.conf（通常是软链接）
-        rm -f /etc/resolv.conf
-    else
-        log_warn "保留现有 DNS 管理服务，后续配置可能会被覆盖。"
-    fi
-fi
-
 read -p "$(printf "%b" "${GREEN}是否修改 DNS 配置？(y/n) 默认 n: ${NC}")" modify_dns
 if [[ "$modify_dns" =~ ^[Yy]$ ]]; then
     while true; do
         read -p "请输入 DNS 服务器（多个用空格分隔）: " dns_servers
         all_valid=true
         for dns in $dns_servers; do
-            if ! validate_ip "$dns"; then
-                all_valid=false
-                break
-            fi
+            validate_ip "$dns" || all_valid=false
         done
         
         if $all_valid; then
-            # 备份现有 /etc/resolv.conf（如果存在）
-            [ -f /etc/resolv.conf ] && cp /etc/resolv.conf /etc/resolv.conf.bak
-            # 解除只读属性（如果有）
+            if systemctl is-active --quiet systemd-resolved; then
+                log_warn "检测到 systemd-resolved 正在运行，建议禁用后再修改 DNS"
+                read -p "$(printf "%b" "${YELLOW}是否停止 systemd-resolved 服务？(y/N) ${NC}")" stop_resolved
+                [[ "$stop_resolved" =~ ^[Yy]$ ]] && systemctl stop systemd-resolved
+            fi
+            
+            cp /etc/resolv.conf /etc/resolv.conf.bak  
             chattr -i /etc/resolv.conf 2>/dev/null
-            # 写入新的 DNS 配置
             printf "nameserver %s\n" $dns_servers > /etc/resolv.conf  
-            # 锁定文件防止后续修改（可选）
             chattr +i /etc/resolv.conf  
             CURRENT_DNS=$dns_servers  # 更新跟踪变量
-            log_success "DNS 配置更新成功！"
             break
         else
             log_warn "包含无效的 IP 地址，请重新输入！"
@@ -231,6 +208,8 @@ if [[ "$modify_swap" =~ ^[Yy]$ ]]; then
         read -p "Swap 大小 (MB，建议为内存的1-2倍): " SWAP_SIZE
         [[ "$SWAP_SIZE" =~ ^[0-9]+$ ]] && break || log_warn "请输入正整数"
     done
+
+    
 
     SWAP_FILE=${SWAP_FILE:-/swapfile}
     if [ -n "$(swapon --show=NAME --noheadings)" ]; then
@@ -270,8 +249,8 @@ if [[ "$enable_bbr" =~ ^[Yy]$ ]]; then
     done
     read -p "是否关闭 IPv6？（y/n）默认 n: " disable_ipv6
 
-    # 计算带宽延迟积（单位：字节）公式：带宽(Mbps)*延迟(ms)*125（粗略估算）
-    bdp=$((bandwidth * latency * 125))  
+    # 计算带宽延迟积（单位：字节）公式：带宽(Mbps)*延迟(ms)*125
+    bdp=$(( (bandwidth * latency * 187.5) ))  
 
     # 备份 sysctl 配置
     cp /etc/sysctl.conf /etc/sysctl.conf.bak
@@ -346,10 +325,12 @@ EOF
     CURRENT_BBR="已启用 (BBR + FQ)"
 fi
   
+
 # 启动服务并设置开机自启
 log_success "启动并设置 fail2ban 和 systemd-timesyncd 开机自启..."
 systemctl start fail2ban systemd-timesyncd
 systemctl enable fail2ban systemd-timesyncd
+
 
 # ---------------------- 最终配置汇总 ---------------------- #
 log_success "所有配置已完成！"
