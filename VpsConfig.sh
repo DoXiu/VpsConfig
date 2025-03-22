@@ -49,6 +49,20 @@ validate_hostname() {
     fi
 }
 
+# 重启 SSH 服务函数（兼容 ssh/sshd 服务名）
+restart_ssh_service() {
+    if systemctl list-units --type=service | grep -qE "(sshd|ssh)\.service"; then
+        # 尝试先重启 sshd 服务，再重启 ssh 服务
+        if systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null; then
+            return 0
+        else
+            log_error "SSH 服务重启失败"
+        fi
+    else
+        log_error "无法找到 SSH 服务"
+    fi
+}
+
 #----------------------- 主逻辑 -----------------------#
 check_root 
 
@@ -110,17 +124,11 @@ while true; do
     fi
 done
 
-# 备份并修改 SSH 配置
+# 备份并修改 SSH 配置（优化：注释掉所有已有的 Port 配置，追加新的 Port 指令）
 cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
-if grep -qE '^[[:space:]]*Port[[:space:]]+[0-9]+' /etc/ssh/sshd_config; then
-    # 替换未被注释的 Port 行
-    sed -i -E "s/^[[:space:]]*Port[[:space:]]+[0-9]+/Port $CURRENT_SSH_PORT/" /etc/ssh/sshd_config
-else
-    # 无有效的 Port 配置，则追加
-    echo "Port $CURRENT_SSH_PORT" >> /etc/ssh/sshd_config
-fi
-systemctl restart ssh || log_error "SSH 服务重启失败"
-
+sed -i '/^[[:space:]]*Port[[:space:]]\+[0-9]\+/ s/^/# /' /etc/ssh/sshd_config
+echo "Port $CURRENT_SSH_PORT" >> /etc/ssh/sshd_config
+restart_ssh_service
 
 # [3] 配置 fail2ban 
 read -p "$(printf "%b" "${GREEN}是否修改 fail2ban 配置？(y/n) 默认 n: ${NC}")" modify_fail2ban 
@@ -209,13 +217,15 @@ if [[ "$modify_swap" =~ ^[Yy]$ ]]; then
         [[ "$SWAP_SIZE" =~ ^[0-9]+$ ]] && break || log_warn "请输入正整数"
     done
 
-    
-
     SWAP_FILE=${SWAP_FILE:-/swapfile}
-    if [ -n "$(swapon --show=NAME --noheadings)" ]; then
+    # 检查现有 Swap
+    if swapon --show=NAME --noheadings | grep -q .; then
         log_warn "检测到现有 Swap，将清除后重建！"
-        swapoff -a
-        sed -i '/swap/d' /etc/fstab
+        swapoff -a || log_warn "Swap 关闭失败"
+        sed -i '/\s*'"$SWAP_FILE"'\s*/d' /etc/fstab
+        if [ -f "$SWAP_FILE" ]; then
+            rm -f "$SWAP_FILE"
+        fi
     fi
 
     log_success "创建 Swap 文件..."
@@ -249,9 +259,9 @@ if [[ "$enable_bbr" =~ ^[Yy]$ ]]; then
     done
     read -p "是否关闭 IPv6？（y/n）默认 n: " disable_ipv6
 
-    # 计算带宽延迟积（单位：字节）公式：带宽(Mbps)*延迟(ms)*125
-    bdp=$(( (bandwidth * latency * 187.5) ))  
-
+    # 计算带宽延迟积（单位：字节）公式：带宽(Mbps)*延迟(ms)*200
+    bdp=$(( bandwidth * latency * 200 ))
+    
     # 备份 sysctl 配置
     cp /etc/sysctl.conf /etc/sysctl.conf.bak
 
@@ -325,12 +335,10 @@ EOF
     CURRENT_BBR="已启用 (BBR + FQ)"
 fi
   
-
 # 启动服务并设置开机自启
 log_success "启动并设置 fail2ban 和 systemd-timesyncd 开机自启..."
 systemctl start fail2ban systemd-timesyncd
 systemctl enable fail2ban systemd-timesyncd
-
 
 # ---------------------- 最终配置汇总 ---------------------- #
 log_success "所有配置已完成！"
