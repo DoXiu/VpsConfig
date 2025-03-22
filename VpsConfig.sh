@@ -172,10 +172,14 @@ filter = sshd
 logpath = /var/log/auth.log 
 EOF
 
-    # 更新跟踪变量 
+   #更新fail2ban变量
     CURRENT_FAIL2BAN_MAXRETRIES=$maxretry 
     CURRENT_FAIL2BAN_BANTIME=$bantime
     CURRENT_FAIL2BAN_FINDTIME=$findtime 
+   # 启动服务并设置开机自启
+   log_success "启动并设置 fail2ban开机自启..."
+   systemctl restart fail2ban
+   systemctl enable fail2ban
 fi 
 
 # [4] 配置 DNS
@@ -222,15 +226,16 @@ if [[ "$modify_swap" =~ ^[Yy]$ ]]; then
         [[ "$SWAP_SIZE" =~ ^[0-9]+$ ]] && break || log_warn "请输入正整数"
     done
 
-    SWAP_FILE=${SWAP_FILE:-/swapfile}
-    # 检查现有 Swap
-    if swapon --show=NAME --noheadings | grep -q .; then
-        log_warn "检测到现有 Swap，将清除后重建！"
-        swapoff -a || log_warn "Swap 关闭失败"
-        sed -i '/\s*'"$SWAP_FILE"'\s*/d' /etc/fstab
-        if [ -f "$SWAP_FILE" ]; then
-            rm -f "$SWAP_FILE"
-        fi
+    SWAP_FILE="/swapfile"
+    # 检查现有 Swap：如果 /swapfile 已存在或者已启用，则先关闭并删除
+    if swapon --show=NAME --noheadings | grep -q "^$SWAP_FILE"; then
+        log_warn "检测到当前启用的 Swap 文件 ($SWAP_FILE)，将进行关闭、删除并重建！"
+        swapoff "$SWAP_FILE" || log_warn "Swap 关闭失败"
+        sed -i "\|$SWAP_FILE|d" /etc/fstab
+        rm -f "$SWAP_FILE"
+    elif [ -f "$SWAP_FILE" ]; then
+        log_warn "检测到 Swap 文件 ($SWAP_FILE)存在但未启用，将删除后重建！"
+        rm -f "$SWAP_FILE"
     fi
 
     log_success "创建 Swap 文件..."
@@ -238,7 +243,7 @@ if [[ "$modify_swap" =~ ^[Yy]$ ]]; then
        log_success "Swap 文件创建成功 (fallocate)"
     else
        log_warn "fallocate 失败，改用 dd 创建..."
-       dd if=/dev/zero of="$SWAP_FILE" bs=1M count=$SWAP_SIZE status=progress || log_error "Swap 文件创建失败"
+       dd if=/dev/zero of="$SWAP_FILE" bs=1M count="$SWAP_SIZE" status=progress || log_error "Swap 文件创建失败"
     fi
     
     chmod 600 "$SWAP_FILE"
@@ -340,10 +345,19 @@ EOF
     CURRENT_BBR="已启用 (BBR + FQ)"
 fi
   
-# 启动服务并设置开机自启
-log_success "启动并设置 fail2ban 和 systemd-timesyncd 开机自启..."
-systemctl start fail2ban systemd-timesyncd
-systemctl enable fail2ban systemd-timesyncd
+# 在最终汇总前，如果未修改 BBR 配置，则检测当前系统是否已启用 BBR，并判断默认队列调度
+if [[ "$CURRENT_BBR" == "未配置" ]]; then
+    current_tcp_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+    if [[ "$current_tcp_cc" == "bbr" ]]; then
+        default_qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null)
+        CURRENT_BBR="已启用 (${current_tcp_cc} + ${default_qdisc})"  
+    fi
+fi
+  
+# 启动systemd-timesyncd服务并设置开机自启
+log_success "启动并设置systemd-timesyncd 开机自启..."
+systemctl restart systemd-timesyncd
+systemctl enable systemd-timesyncd
 
 # ---------------------- 最终配置汇总 ---------------------- #
 log_success "所有配置已完成！"
