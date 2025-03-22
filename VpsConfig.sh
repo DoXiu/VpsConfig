@@ -197,9 +197,14 @@ if [[ "$modify_dns" =~ ^[Yy]$ ]]; then
             fi
             
             cp /etc/resolv.conf /etc/resolv.conf.bak  
-            chattr -i /etc/resolv.conf 2>/dev/null
+            # 如果 /etc/resolv.conf 不是符号链接，则尝试修改属性
+            if [ ! -L /etc/resolv.conf ]; then
+                chattr -i /etc/resolv.conf 2>/dev/null || log_warn "无法取消 /etc/resolv.conf 的不可变属性"
+            fi
             printf "nameserver %s\n" $dns_servers > /etc/resolv.conf  
-            chattr +i /etc/resolv.conf  
+            if [ ! -L /etc/resolv.conf ]; then
+                chattr +i /etc/resolv.conf 2>/dev/null || log_warn "无法设置 /etc/resolv.conf 为不可变"
+            fi
             CURRENT_DNS=$dns_servers  # 更新跟踪变量
             break
         else
@@ -259,8 +264,8 @@ if [[ "$enable_bbr" =~ ^[Yy]$ ]]; then
     done
     read -p "是否关闭 IPv6？（y/n）默认 n: " disable_ipv6
 
-    # 计算带宽延迟积（单位：字节）公式：带宽(Mbps)*延迟(ms)*200
-    bdp=$(( bandwidth * latency * 200 ))
+    # 计算带宽延迟积（单位：字节）公式：带宽(Mbps)*延迟(ms)*187（bash 算术扩展只支持整数运算，如需精确请用 bc/awk）
+    bdp=$(( bandwidth * latency * 187 ))
     
     # 备份 sysctl 配置
     cp /etc/sysctl.conf /etc/sysctl.conf.bak
