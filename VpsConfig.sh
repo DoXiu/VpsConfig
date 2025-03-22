@@ -9,7 +9,7 @@ NC='\033[0m'
 
 # 日志函数 
 log_success() { printf "%b\n" "${GREEN}[✓] $1${NC}"; }
-log_error() { printf "%b\n" "${RED}[✗] 错误：$1${NC}" >&2; exit 1; }
+log_error()   { printf "%b\n" "${RED}[✗] 错误：$1${NC}" >&2; exit 1; }
 log_warn()    { printf "%b\n" "${YELLOW}[!] $1${NC}"; }
 
 # 检查 root 权限 
@@ -70,7 +70,7 @@ apt update && apt upgrade -y || log_error "系统更新失败"
 
 # 安装软件包 
 log_success "安装软件包..."
-apt install -y unzip curl wget sudo fail2ban rsyslog systemd-timesyncd ufw htop cron || log_error "软件安装失败"
+apt install -y unzip curl wget sudo fail2ban rsyslog systemd-timesyncd htop cron || log_error "软件安装失败"
 
 # ---------------------- 配置修改部分 ---------------------- #
 # [1] 修改 hostname 
@@ -120,19 +120,6 @@ else
     echo "Port $CURRENT_SSH_PORT" >> /etc/ssh/sshd_config
 fi
 systemctl restart ssh || log_error "SSH 服务重启失败"
-
-# 更新 ufw 防火墙规则：先删除旧端口规则，再添加新端口规则
-echo -e "${GREEN}配置 ufw...${NC}"
-if [ "$old_ssh_port" != "$CURRENT_SSH_PORT" ]; then
-    # 删除旧端口规则（如果存在）
-    if ufw status | grep -qE "($old_ssh_port)/tcp"; then
-        ufw delete allow "$old_ssh_port/tcp"
-    fi
-fi
-# 添加新端口规则（如果未存在）
-if ! ufw status | grep -qE "($CURRENT_SSH_PORT)/tcp"; then
-    ufw allow "$CURRENT_SSH_PORT/tcp"
-fi
 
 # [3] 配置 fail2ban 
 read -p "$(printf "%b" "${GREEN}是否修改 fail2ban 配置？(y/n) 默认 n: ${NC}")" modify_fail2ban 
@@ -184,27 +171,51 @@ fi
 
 # [4] 配置 DNS
 echo -e "\n${YELLOW}当前 DNS 服务器: ${CURRENT_DNS:-无配置}${NC}"
+
+# 检查 systemd-resolved 或 openresolv 状态
+if systemctl is-active --quiet systemd-resolved || dpkg -l openresolv &>/dev/null; then
+    log_warn "检测到 systemd-resolved 正在运行或 openresolv 已安装。"
+    read -p "$(printf "%b" "${YELLOW}是否禁用 systemd-resolved 并卸载 openresolv（如果已安装）？(y/n): ${NC}")" disable_choice
+    if [[ "$disable_choice" =~ ^[Yy]$ ]]; then
+        if systemctl is-active --quiet systemd-resolved; then
+            log_success "停止并禁用 systemd-resolved 服务..."
+            systemctl stop systemd-resolved
+            systemctl disable systemd-resolved
+        fi
+        if dpkg -l openresolv &>/dev/null; then
+            log_success "卸载 openresolv..."
+            apt-get remove -y openresolv
+        fi
+        # 删除现有的 /etc/resolv.conf（通常是软链接）
+        rm -f /etc/resolv.conf
+    else
+        log_warn "保留现有 DNS 管理服务，后续配置可能会被覆盖。"
+    fi
+fi
+
 read -p "$(printf "%b" "${GREEN}是否修改 DNS 配置？(y/n) 默认 n: ${NC}")" modify_dns
 if [[ "$modify_dns" =~ ^[Yy]$ ]]; then
     while true; do
         read -p "请输入 DNS 服务器（多个用空格分隔）: " dns_servers
         all_valid=true
         for dns in $dns_servers; do
-            validate_ip "$dns" || all_valid=false
+            if ! validate_ip "$dns"; then
+                all_valid=false
+                break
+            fi
         done
         
         if $all_valid; then
-            if systemctl is-active --quiet systemd-resolved; then
-                log_warn "检测到 systemd-resolved 正在运行，建议禁用后再修改 DNS"
-                read -p "$(printf "%b" "${YELLOW}是否停止 systemd-resolved 服务？(y/N) ${NC}")" stop_resolved
-                [[ "$stop_resolved" =~ ^[Yy]$ ]] && systemctl stop systemd-resolved
-            fi
-            
-            cp /etc/resolv.conf /etc/resolv.conf.bak  
+            # 备份现有 /etc/resolv.conf（如果存在）
+            [ -f /etc/resolv.conf ] && cp /etc/resolv.conf /etc/resolv.conf.bak
+            # 解除只读属性（如果有）
             chattr -i /etc/resolv.conf 2>/dev/null
+            # 写入新的 DNS 配置
             printf "nameserver %s\n" $dns_servers > /etc/resolv.conf  
+            # 锁定文件防止后续修改（可选）
             chattr +i /etc/resolv.conf  
             CURRENT_DNS=$dns_servers  # 更新跟踪变量
+            log_success "DNS 配置更新成功！"
             break
         else
             log_warn "包含无效的 IP 地址，请重新输入！"
@@ -220,8 +231,6 @@ if [[ "$modify_swap" =~ ^[Yy]$ ]]; then
         read -p "Swap 大小 (MB，建议为内存的1-2倍): " SWAP_SIZE
         [[ "$SWAP_SIZE" =~ ^[0-9]+$ ]] && break || log_warn "请输入正整数"
     done
-
-    
 
     SWAP_FILE=${SWAP_FILE:-/swapfile}
     if [ -n "$(swapon --show=NAME --noheadings)" ]; then
@@ -261,8 +270,8 @@ if [[ "$enable_bbr" =~ ^[Yy]$ ]]; then
     done
     read -p "是否关闭 IPv6？（y/n）默认 n: " disable_ipv6
 
-    # 计算带宽延迟积（单位：字节）公式：带宽(Mbps)*延迟(ms)*125
-    bdp=$(( (bandwidth * latency * 187.5) ))  
+    # 计算带宽延迟积（单位：字节）公式：带宽(Mbps)*延迟(ms)*125（粗略估算）
+    bdp=$((bandwidth * latency * 125))  
 
     # 备份 sysctl 配置
     cp /etc/sysctl.conf /etc/sysctl.conf.bak
@@ -302,9 +311,6 @@ net.ipv4.tcp_fack = 1
 # 端口范围调整
 net.ipv4.ip_local_port_range = 1024 65535
 
-# 连接跟踪表大小
-net.netfilter.nf_conntrack_max = 65536
-
 # 性能优化
 net.ipv4.tcp_syncookies = 0
 net.ipv4.tcp_timestamps = 0
@@ -340,20 +346,16 @@ EOF
     CURRENT_BBR="已启用 (BBR + FQ)"
 fi
   
-
 # 启动服务并设置开机自启
 log_success "启动并设置 fail2ban 和 systemd-timesyncd 开机自启..."
 systemctl start fail2ban systemd-timesyncd
 systemctl enable fail2ban systemd-timesyncd
-# 启用 ufw
-read -p "$(printf "%b" "${YELLOW}即将启用防火墙，请确认已放行必要端口！继续？(y/n) ${NC}")" confirm
-[[ "$confirm" =~ ^[Yy]$ ]] && ufw --force enable || log_warn "已跳过防火墙启用步骤"
 
 # ---------------------- 最终配置汇总 ---------------------- #
 log_success "所有配置已完成！"
 echo -e "${YELLOW}\n==================== 最终配置汇总 ====================${NC}"
 echo -e "1. Hostname: ${GREEN}$CURRENT_HOSTNAME${NC}"
-echo -e "2. SSH 端口: ${GREEN}$CURRENT_SSH_PORT${NC}"
+echo -e "2. SSH 端口: ${GREEN}$CURRENT_SSH_PORT${NC} 如果有防火墙请注意放行对应端口"
 echo -e "3. fail2ban 配置:"
 echo -e "   - 最大错误次数: ${GREEN}$CURRENT_FAIL2BAN_MAXRETRIES${NC}"
 echo -e "   - 封禁时间: ${GREEN}$CURRENT_FAIL2BAN_BANTIME 小时${NC}"
@@ -363,8 +365,3 @@ echo -e "5. Swap 配置: ${GREEN}${CURRENT_SWAP:-未修改}${NC}"
 echo -e "6. BBR 配置：${GREEN}${CURRENT_BBR:-未修改}${NC}"
 echo -e "7. IPv6 状态：${GREEN}${CURRENT_IPV6_STATUS}${NC}"
 echo -e "${YELLOW}===================================================${NC}"
-printf "%b\n" "${YELLOW}重要提示："
-echo "1. 请确认可通过端口 $CURRENT_SSH_PORT 连接 SSH"
-echo "2. 当前防火墙规则："
-ufw status
-printf "%b\n" "${NC}"
