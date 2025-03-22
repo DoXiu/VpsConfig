@@ -6,7 +6,7 @@
 
 *根据交互的方式修改hostname
 
-*根据交互的方式修改ssh端口，并使用fail2ban对ssh进行保护，使用ufw放行该端口
+*根据交互的方式修改ssh端口，并使用fail2ban对ssh进行保护
 
 *根据交互的方式修改dns，并对resolv.conf文件进行加锁，防止被重置
 
