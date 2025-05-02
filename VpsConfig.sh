@@ -49,18 +49,9 @@ validate_hostname() {
     fi
 }
 
-# 重启 SSH 服务函数（兼容 ssh/sshd 服务名）
+# 重启 SSH 服务函数（适配Debian 12）
 restart_ssh_service() {
-    if systemctl list-units --type=service | grep -qE "(sshd|ssh)\.service"; then
-        # 尝试先重启 sshd 服务，再重启 ssh 服务
-        if systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null; then
-            return 0
-        else
-            log_error "SSH 服务重启失败"
-        fi
-    else
-        log_error "无法找到 SSH 服务"
-    fi
+    systemctl restart ssh || log_error "SSH 服务重启失败，请检查配置"
 }
 
 #----------------------- 主逻辑 -----------------------#
@@ -112,23 +103,18 @@ fi
 
 # [2] 修改 SSH 端口
 echo -e "\n${YELLOW}当前 SSH 端口: $CURRENT_SSH_PORT${NC}"
-old_ssh_port=$CURRENT_SSH_PORT
-while true; do
-    read -p "$(printf "%b" "${GREEN}请输入新的 SSH 端口（默认 $CURRENT_SSH_PORT）: ${NC}")" ssh_port
-    ssh_port=${ssh_port:-$CURRENT_SSH_PORT}
-    if validate_port "$ssh_port"; then
-        CURRENT_SSH_PORT=$ssh_port
-        break
-    else
-        log_warn "端口必须是 1-65535 之间的整数！"
-    fi
+read -p "$(printf "%b" "${GREEN}请输入新的 SSH 端口（默认 $CURRENT_SSH_PORT）: ${NC}")" ssh_port
+ssh_port=${ssh_port:-$CURRENT_SSH_PORT}
+until validate_port "$ssh_port"; do
+    log_warn "端口必须是 1-65535 之间的整数！"
+    read -p "$(printf "%b" "${GREEN}请重新输入 SSH 端口: ${NC}")" ssh_port
 done
 
-# 备份并修改 SSH 配置（优化：注释掉所有已有的 Port 配置，追加新的 Port 指令）
 cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
-sed -i '/^[[:space:]]*Port[[:space:]]\+[0-9]\+/ s/^/# /' /etc/ssh/sshd_config
-echo "Port $CURRENT_SSH_PORT" >> /etc/ssh/sshd_config
+sed -i '/^[[:space:]]*Port[[:space:]]\+/d' /etc/ssh/sshd_config
+echo "Port $ssh_port" | tee -a /etc/ssh/sshd_config >/dev/null
 restart_ssh_service
+CURRENT_SSH_PORT=$ssh_port
 
 # [3] 配置 fail2ban 
 read -p "$(printf "%b" "${GREEN}是否修改 fail2ban 配置？(y/n) 默认 n: ${NC}")" modify_fail2ban 
